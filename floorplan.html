@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Floorplan Solver</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Cormorant+Garamond:wght@300;400;600&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+    :root {
+      --bg:            #f5f2ed;
+      --surface:       #fdfcfa;
+      --ink:           #1a1714;
+      --ink-muted:     #6b6460;
+      --accent:        #c17f4a;
+      --accent-light:  #e8d5bc;
+      --must:          #2d5a40;
+      --must-light:    #d6e8dc;
+      --must-not:      #b85450;
+      --must-not-light:#fbeaea;
+      --neutral:       #a89f96;
+      --border:        #ddd8d0;
+    }
+ 
+    html, body { height: 100%; overflow: hidden; }
+ 
+    body {
+      font-family: 'DM Mono', monospace;
+      background: var(--bg);
+      color: var(--ink);
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      grid-template-rows: 48px 1fr;
+    }
+ 
+    /* ── HEADER ── */
+    header {
+      grid-column: 1 / -1;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    header h1 { font-family: 'Cormorant Garamond', serif; font-size: 22px; font-weight: 300; letter-spacing: 0.02em; }
+    header span { font-size: 10px; color: var(--ink-muted); letter-spacing: 0.14em; text-transform: uppercase; }
+ 
+    /* ── LEFT PANEL ── */
+    aside {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .section-label { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-muted); }
+    .matrix-hint-small { font-size: 9px; color: var(--ink-muted); line-height: 1.5; padding: 6px 14px 8px; border-bottom: 1px solid var(--border); }
+ 
+    /* ── GRID MATRIX ── */
+    .matrix-section {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      overflow: hidden;
+    }
+    .matrix-scroll { overflow: auto; padding: 0 14px 8px; display: flex; align-items: center; min-height: 100%; }
+    .matrix-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+    .matrix-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+ 
+    .matrix-table { border-collapse: collapse; table-layout: fixed; }
+    .matrix-table th, .matrix-table td { width: 34px; height: 34px; padding: 0; }
+ 
+    /* column header cells */
+    .col-head {
+      font-family: 'Cormorant Garamond', serif; font-size: 11px; color: var(--ink);
+      white-space: nowrap; overflow: visible;
+      writing-mode: vertical-rl; transform: rotate(180deg);
+      vertical-align: bottom; text-align: left;
+      padding-bottom: 4px !important;
+      max-height: none; cursor: pointer;
+      transition: color 0.12s;
+      position: sticky; top: 0; z-index: 2;
+      background: var(--surface);
+      box-shadow: 0 -60px 0 60px var(--surface);
+    }
+    .col-head:hover { color: var(--accent); }
+    .col-head.exterior { color: var(--accent); }
+    /* sticky corner — keeps top-left cell pinned too */
+    .matrix-table thead tr th:first-child {
+      position: sticky; top: 0; left: 0; z-index: 3;
+      background: var(--surface);
+    }
+ 
+    /* row header cells */
+    .row-head-cell { width: auto !important; padding-right: 6px !important; }
+    .room-label-row {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 4px; height: 34px;
+    }
+    .room-label {
+      font-family: 'Cormorant Garamond', serif; font-size: 13px; color: var(--ink);
+      white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer; padding: 1px 4px; border-radius: 3px;
+      transition: background 0.12s, color 0.12s; border: 1px solid transparent;
+    }
+    .room-label:hover { background: var(--accent-light); }
+    .room-label.exterior { color: var(--accent); border-color: var(--accent-light); background: var(--accent-light); }
+    .room-label.editing { display: none; }
+    .room-label-input {
+      display: none; font-family: 'Cormorant Garamond', serif; font-size: 13px;
+      color: var(--ink); border: 1px solid var(--accent); background: var(--surface);
+      padding: 1px 4px; border-radius: 3px; outline: none; width: 110px;
+    }
+    .room-label-input.visible { display: block; }
+    .room-remove {
+      background: none; border: none; cursor: pointer; color: transparent;
+      font-size: 11px; line-height: 1; padding: 0; width: 14px; flex-shrink: 0;
+      transition: color 0.12s;
+    }
+    .room-label-row:hover .room-remove { color: var(--must-not); }
+ 
+    /* data cells */
+    .dm-cell {
+      border: 0.5px solid var(--border); background: var(--surface);
+      text-align: center; vertical-align: middle;
+      cursor: pointer; transition: background 0.1s;
+    }
+    .dm-cell:hover { background: var(--accent-light); }
+    .dm-cell.diag { background: var(--ink); border-color: var(--ink); cursor: default; pointer-events: none; }
+ 
+    .sym-must { width: 14px; height: 14px; border-radius: 50%; background: var(--must); display: inline-block; }
+    .sym-must-not { width: 14px; height: 14px; border-radius: 50%; background: transparent; border: 2.5px solid var(--must-not); display: inline-block; }
+ 
+    .btn-add-room {
+      margin: 8px 14px 12px; padding: 5px 10px; border: 1px dashed var(--border);
+      background: transparent; font-family: 'DM Mono', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--ink-muted); cursor: pointer; transition: all 0.15s;
+      width: calc(100% - 28px); text-align: left;
+    }
+    .btn-add-room:hover { border-color: var(--accent); color: var(--accent); }
+ 
+    .matrix-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 8px 14px 16px; border-bottom: 1px solid var(--border); }
+    .legend-row { display: flex; align-items: center; gap: 5px; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted); }
+    .legend-ext { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--accent-light); border: 1px solid var(--accent); }
+ 
+    /* ── SOLVE BUTTON ── */
+    .solve-wrap { padding: 10px 14px; }
+    #error-msg { display: none; padding: 6px 10px; background: var(--must-not-light); border: 1px solid var(--must-not); color: var(--must-not); font-size: 10px; margin-bottom: 6px; }
+    .btn-primary { width: 100%; padding: 9px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: all 0.15s; }
+    .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+ 
+    /* ── RIGHT PANEL — bubble diagram fills entire area ── */
+    main {
+      position: relative;
+      overflow: hidden;
+    }
+ 
+    /* Bubble diagram always visible, fills main */
+    #bubble-panel {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-rows: 36px 1fr;
+    }
+ 
+    /* Title bar at top of the canvas */
+    .bubble-title-bar {
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      flex-shrink: 0;
+    }
+ 
+    /* SVG canvas sits in the row below the title */
+    .diagram-canvas-wrap { position: relative; overflow: hidden; }
+    svg#diagram { width: 100%; height: 100%; display: block; }
+ 
+    .empty-state {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px; color: var(--ink-muted); pointer-events: none;
+    }
+    .empty-state .big { font-family: 'Cormorant Garamond', serif; font-size: 56px; font-weight: 300; opacity: 0.1; }
+    .empty-state .sub { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.4; }
+ 
+    .bubble { cursor: grab; }
+    .bubble:active { cursor: grabbing; }
+    .bubble-label { font-family: 'DM Mono', monospace; font-size: 10px; fill: var(--ink); text-anchor: middle; dominant-baseline: middle; pointer-events: none; user-select: none; }
+    .link-must { stroke: var(--must); stroke-width: 2; }
+ 
+    .diagram-legend {
+      position: absolute; bottom: 16px; right: 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 10px 14px; display: none; flex-direction: column; gap: 7px;
+    }
+    .dl-item { display: flex; align-items: center; gap: 8px; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-muted); }
+    .dl-line { width: 22px; height: 2px; flex-shrink: 0; }
+    .dl-circle { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+ 
+    /* ── GRID OVERLAY — floating top-right corner ── */
+    #grid-overlay {
+      position: absolute;
+      top: 53px;
+      right: 16px;
+      width: 280px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 20px rgba(26,23,20,0.10);
+      display: none;
+      flex-direction: column;
+      z-index: 10;
+      /* max height so it never overflows the canvas */
+      max-height: calc(100% - 32px);
+    }
+    #grid-overlay.visible { display: flex; }
+ 
+    .grid-overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .grid-overlay-title {
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+    }
+    .grid-overlay-actions { display: flex; align-items: center; gap: 8px; }
+ 
+    .shuffle-btn {
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .shuffle-btn:hover { border-color: var(--accent); color: var(--accent); }
+ 
+ 
+    .grid-overlay-scroll {
+      overflow: auto;
+      padding: 10px;
+      flex: 1;
+    }
+    .grid-overlay-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+    .grid-overlay-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+ 
+    #grid-canvas {
+      display: grid;
+      gap: 2px;
+    }
+    .grid-cell {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      text-align: center;
+      padding: 4px;
+      position: relative;
+    }
+    .grid-cell.occupied { border-color: var(--accent); }
+    .grid-cell.occupied.exterior { background: #fdf6ee; border-color: var(--accent); }
+    .grid-cell.empty { background: var(--bg); border-color: var(--border); border-style: dashed; }
+    .cell-name { font-family: 'Cormorant Garamond', serif; font-size: 11px; font-weight: 400; line-height: 1.2; color: var(--ink); }
+    .cell-badge { font-size: 7px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+    .cell-index { position: absolute; top: 2px; left: 3px; font-size: 7px; color: var(--border); }
+ 
+    .grid-empty-msg {
+      font-size: 10px; color: var(--ink-muted); opacity: 0.5;
+      text-align: center; padding: 20px 0;
+    }
+  </style>
+</head>
+<body>
+ 
+<header>
+  <h1>Floorplan Solver</h1>
+  <span>Adjacency matrix · CSP planner</span>
+</header>
+ 
+<!-- LEFT: diamond matrix + solve -->
+<aside>
+  <div class="panel-header">
+    <span class="section-label">Adjacency Matrix</span>
+  </div>
+  <p class="matrix-hint-small">Click cell to cycle: neutral → ● must → ○ must not &nbsp;·&nbsp; Click name: toggle exterior &nbsp;·&nbsp; Double-click row label: rename</p>
+ 
+  <div class="matrix-section">
+    <div class="matrix-scroll">
+      <div id="matrix-container">
+        <p style="font-size:10px;color:var(--ink-muted);opacity:0.5;padding:8px 0;">Add a room to begin.</p>
+      </div>
+    </div>
+    <div>
+      <button class="btn-add-room" onclick="addRoom()">+ Add room</button>
+      <div class="matrix-legend">
+        <div class="legend-row"><span class="sym-must" style="width:10px;height:10px;"></span> Must</div>
+        <div class="legend-row"><span class="sym-must-not" style="width:10px;height:10px;"></span> Must not</div>
+        <div class="legend-row"><span style="display:inline-block;width:10px;height:10px;border:1px solid var(--border);background:var(--surface);"></span> Neutral</div>
+        <div class="legend-row"><span class="legend-ext"></span> Exterior</div>
+      </div>
+    </div>
+  </div>
+ 
+  <div class="solve-wrap">
+    <div id="error-msg"></div>
+    <button class="btn-primary" onclick="solve()">Generate Floorplan →</button>
+  </div>
+</aside>
+ 
+<!-- RIGHT: bubble diagram fills everything, grid is a floating overlay -->
+<main>
+  <!-- Bubble diagram — always present -->
+  <div id="bubble-panel">
+    <div class="bubble-title-bar">Bubble Diagram</div>
+    <div class="diagram-canvas-wrap">
+      <div class="empty-state" id="empty-state">
+        <div class="big">◎</div>
+        <div class="sub">Add rooms · fill the matrix · generate</div>
+      </div>
+      <svg id="diagram"></svg>
+      <div class="diagram-legend" id="diagram-legend">
+        <div class="dl-item"><div class="dl-line" style="background:var(--must);"></div> Must adjoin</div>
+        <div class="dl-item"><div class="dl-circle" style="background:#fdf6ee;border:1.5px solid var(--accent);"></div> Exterior</div>
+        <div class="dl-item"><div class="dl-circle" style="background:#dde8f0;border:1.5px solid #7a9ab5;"></div> Interior</div>
+      </div>
+    </div>
+  </div>
+ 
+  <!-- Grid overlay — floating top-right -->
+  <div id="grid-overlay">
+    <div class="grid-overlay-header">
+      <span class="grid-overlay-title">Grid solution</span>
+      <div class="grid-overlay-actions">
+        <button class="shuffle-btn" onclick="shuffleGrid()">↺ Shuffle</button>
+      </div>
+    </div>
+    <div class="grid-overlay-scroll">
+      <div id="grid-canvas">
+        <p class="grid-empty-msg">Generate a floorplan first.</p>
+      </div>
+    </div>
+  </div>
+</main>
+ 
+<script>
+  const FLASK_URL = "http://127.0.0.1:5000/solve";
+ 
+  let rooms       = [];   // [{ name, exterior }]
+  let matrix      = {};   // matrix[r1][r2] = "neutral"|"must"|"must_not"
+  let lastData    = null;
+  let roomCounter = 0;
+ 
+  // ── ROOMS + MATRIX ──────────────────────────────────────────────────────────
+ 
+  function addRoom() {
+    roomCounter++;
+    const name = "Room " + roomCounter;
+    rooms.push({ name, exterior: false });
+    matrix[name] = {};
+    rooms.forEach(r => {
+      if (r.name !== name) {
+        matrix[name][r.name] = "neutral";
+        matrix[r.name][name] = "neutral";
+      }
+    });
+    renderMatrix();
+    clearError();
+    setTimeout(() => startRename(rooms.length - 1), 50);
+  }
+ 
+  function removeRoom(idx) {
+    const name = rooms[idx].name;
+    rooms.splice(idx, 1);
+    delete matrix[name];
+    rooms.forEach(r => { if (matrix[r.name]) delete matrix[r.name][name]; });
+    renderMatrix();
+  }
+ 
+  function toggleExterior(idx) {
+    rooms[idx].exterior = !rooms[idx].exterior;
+    renderMatrix();
+  }
+ 
+  function startRename(idx) {
+    const label = document.querySelector(`.room-label[data-idx="${idx}"]`);
+    const input = document.querySelector(`.room-label-input[data-idx="${idx}"]`);
+    if (!label || !input) return;
+    label.classList.add("editing");
+    input.classList.add("visible");
+    input.value = rooms[idx].name;
+    input.focus();
+    input.select();
+  }
+ 
+  function commitRename(idx, input) {
+    const newName = input.value.trim();
+    if (!newName) { cancelRename(idx); return; }
+    if (rooms.find((r, i) => r.name === newName && i !== idx)) {
+      input.style.borderColor = "var(--must-not)";
+      setTimeout(() => { input.style.borderColor = ""; }, 800);
+      return;
+    }
+    const oldName = rooms[idx].name;
+    if (newName !== oldName) {
+      const newMatrix = {};
+      rooms.forEach(r => {
+        const k = r.name === oldName ? newName : r.name;
+        newMatrix[k] = {};
+        rooms.forEach(r2 => {
+          const k2 = r2.name === oldName ? newName : r2.name;
+          newMatrix[k][k2] = matrix[r.name]?.[r2.name] ?? "neutral";
+        });
+      });
+      rooms[idx].name = newName;
+      Object.keys(matrix).forEach(k => delete matrix[k]);
+      Object.assign(matrix, newMatrix);
+    }
+    cancelRename(idx);
+    renderMatrix();
+  }
+ 
+  function cancelRename(idx) {
+    const label = document.querySelector(`.room-label[data-idx="${idx}"]`);
+    const input = document.querySelector(`.room-label-input[data-idx="${idx}"]`);
+    if (label) label.classList.remove("editing");
+    if (input) input.classList.remove("visible");
+  }
+ 
+  // ── MATRIX ───────────────────────────────────────────────────────────────────
+ 
+  const CYCLE = { neutral: "must", must: "must_not", must_not: "neutral" };
+ 
+  function cycleCell(r1, r2) {
+    matrix[r1][r2] = CYCLE[matrix[r1][r2]] || "neutral";
+    matrix[r2][r1] = matrix[r1][r2];
+    renderMatrix();
+  }
+ 
+  function getCell(a, b) { return (matrix[a] && matrix[a][b]) ? matrix[a][b] : "neutral"; }
+ 
+  function symHTML(state) {
+    if (state === "must")     return '<span class="sym-must"></span>';
+    if (state === "must_not") return '<span class="sym-must-not"></span>';
+    return "";
+  }
+ 
+  function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+ 
+  function renderMatrix() {
+    const container = document.getElementById("matrix-container");
+    const n = rooms.length;
+    if (n === 0) {
+      container.innerHTML = '<p style="font-size:10px;color:var(--ink-muted);opacity:0.5;padding:8px 0;">Add a room to begin.</p>';
+      return;
+    }
+ 
+    // Column headers row
+    let html = '<div style="margin:auto;padding:12px 0;"><table class="matrix-table"><thead><tr>';
+    html += '<th style="width:auto;"></th>'; // top-left corner (above row labels)
+    for (let c = 0; c < n; c++) {
+      const r = rooms[c];
+      html += `<th class="col-head ${r.exterior ? 'exterior' : ''}"
+        title="${r.exterior ? 'Exterior' : 'Interior'} – click to toggle"
+        onclick="toggleExterior(${c})"
+      >${esc(r.name)}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+ 
+    // Data rows
+    for (let r = 0; r < n; r++) {
+      const room = rooms[r];
+      html += '<tr>';
+      // Row header
+      html += `<td class="row-head-cell">
+        <div class="room-label-row">
+          <button class="room-remove" onclick="removeRoom(${r})" title="Remove">×</button>
+          <input class="room-label-input" data-idx="${r}"
+            value="${esc(room.name)}"
+            onblur="commitRename(${r}, this)"
+            onkeydown="if(event.key==='Enter') this.blur(); if(event.key==='Escape') cancelRename(${r});"
+          />
+          <span class="room-label ${room.exterior ? 'exterior' : ''}" data-idx="${r}"
+            title="${room.exterior ? 'Exterior – click to toggle' : 'Interior – click to toggle'}"
+            onclick="toggleExterior(${r})"
+            ondblclick="startRename(${r})"
+          >${esc(room.name)}</span>
+        </div>
+      </td>`;
+      // Data cells — lower triangle only; upper triangle is blank
+      for (let c = 0; c < n; c++) {
+        if (r === c) {
+          html += '<td class="dm-cell diag"></td>';
+        } else if (c > r) {
+          html += '<td></td>';
+        } else {
+          const state = getCell(room.name, rooms[c].name);
+          html += `<td class="dm-cell" data-r="${esc(room.name)}" data-c="${esc(rooms[c].name)}">${symHTML(state)}</td>`;
+        }
+      }
+      html += '</tr>';
+    }
+ 
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+ 
+    container.querySelectorAll('.dm-cell:not(.diag)').forEach(cell => {
+      cell.addEventListener('click', () => cycleCell(cell.dataset.r, cell.dataset.c));
+    });
+  }
+ 
+  function getConstraints() {
+    const out = [];
+    for (let r = 1; r < rooms.length; r++)
+      for (let c = 0; c < r; c++) {
+        const state = getCell(rooms[r].name, rooms[c].name);
+        if (state !== "neutral") out.push({ room1: rooms[r].name, type: state, room2: rooms[c].name });
+      }
+    return out;
+  }
+ 
+    // ── SOLVE ────────────────────────────────────────────────────────────────────
+ 
+  async function solve() {
+    clearError();
+    if (rooms.length < 2) { showError("Add at least 2 rooms."); return; }
+    const constraints = getConstraints();
+    const payload = { rooms, constraints: constraints.map(c => ({ room1: c.room1, type: c.type, room2: c.room2 })) };
+    let data;
+    try {
+      const res = await fetch(FLASK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      data = await res.json();
+      if (!res.ok) { showError(data.error || "Solver error."); return; }
+    } catch (e) { showError("Could not reach Flask server. Is it running?"); return; }
+ 
+    lastData = data;
+    document.getElementById("empty-state").style.display = "none";
+    document.getElementById("diagram-legend").style.display = "flex";
+ 
+    // Draw bubble diagram once — never redrawn by shuffle
+    drawDiagram(data.nodes, data.links);
+ 
+    // Show grid overlay with the solution
+    renderGrid(data);
+    document.getElementById("grid-overlay").classList.add("visible");
+  }
+ 
+  // Shuffle only re-fetches a new grid solution — bubble diagram is untouched
+  async function shuffleGrid() {
+    clearError();
+    if (rooms.length < 2) return;
+    const constraints = getConstraints();
+    const payload = { rooms, constraints: constraints.map(c => ({ room1: c.room1, type: c.type, room2: c.room2 })) };
+    let data;
+    try {
+      const res = await fetch(FLASK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      data = await res.json();
+      if (!res.ok) { showError(data.error || "Solver error."); return; }
+    } catch (e) { showError("Could not reach Flask server. Is it running?"); return; }
+    lastData = data;
+    renderGrid(data);  // only the grid overlay updates — bubble diagram stays exactly as-is
+  }
+ 
+ 
+  // ── GRID RENDER ──────────────────────────────────────────────────────────────
+ 
+  function renderGrid(data) {
+    const gc = document.getElementById("grid-canvas");
+    if (!data || !data.grid || !data.solution) {
+      gc.innerHTML = `<p class="grid-empty-msg">No solution found.</p>`;
+      return;
+    }
+    const { rows, cols } = data.grid;
+    const totalCells = rows * cols;
+    const cellMap = {};
+    Object.entries(data.solution).forEach(([name, pos]) => {
+      const idx = pos.row * cols + pos.col;
+      const roomInfo = rooms.find(r => r.name === name);
+      cellMap[idx] = { name, exterior: roomInfo?.exterior ?? false };
+    });
+ 
+    // cell size scales to fit the overlay width (~258px usable)
+    const cellSize = Math.max(44, Math.floor(258 / cols));
+    gc.style.gridTemplateColumns = `repeat(${cols}, ${cellSize}px)`;
+    gc.style.gridTemplateRows    = `repeat(${rows}, ${cellSize}px)`;
+ 
+    let html = "";
+    for (let i = 0; i < totalCells; i++) {
+      const room = cellMap[i];
+      if (room) {
+        html += `<div class="grid-cell occupied ${room.exterior ? 'exterior' : ''}" style="width:${cellSize}px;height:${cellSize}px;">
+          <span class="cell-index">${i}</span>
+          <span class="cell-name">${room.name}</span>
+          ${room.exterior ? '<span class="cell-badge">ext</span>' : ''}
+        </div>`;
+      } else {
+        html += `<div class="grid-cell empty" style="width:${cellSize}px;height:${cellSize}px;"><span class="cell-index">${i}</span></div>`;
+      }
+    }
+    gc.innerHTML = html;
+  }
+ 
+  // ── D3 BUBBLE DIAGRAM ────────────────────────────────────────────────────────
+ 
+  function drawDiagram(nodes, links) {
+    const svg   = d3.select("#diagram");
+    svg.selectAll("*").remove();
+ 
+    const canvasWrap = document.querySelector(".diagram-canvas-wrap");
+    const W = canvasWrap.clientWidth;
+    const H = canvasWrap.clientHeight;
+ 
+    const defs = svg.append("defs");
+    const pat = defs.append("pattern").attr("id","grid").attr("width",28).attr("height",28).attr("patternUnits","userSpaceOnUse");
+    pat.append("path").attr("d","M 28 0 L 0 0 0 28").attr("fill","none").attr("stroke","#e8e3dc").attr("stroke-width",0.4);
+    svg.append("rect").attr("width",W).attr("height",H).attr("fill","url(#grid)");
+ 
+    const linkGroup = svg.append("g").attr("class","links");
+    const nodeGroup = svg.append("g").attr("class","nodes");
+ 
+    const baseR = Math.min(W, H) * 0.08;
+    nodes.forEach(n => {
+      n.r = baseR;
+      n.x = W / 2 + (Math.random() - 0.5) * 180;
+      n.y = H / 2 + (Math.random() - 0.5) * 180;
+    });
+ 
+    const mustLinks    = links.filter(l => l.type === "must");
+    const mustNotLinks = links.filter(l => l.type === "must_not");
+ 
+    const sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(mustLinks).id(d => d.id)
+        .distance(d => (d.source.r || baseR) + (d.target.r || baseR) + 4)
+        .strength(0.9))
+      .force("charge", d3.forceManyBody().strength(-60))
+      .force("center", d3.forceCenter(W / 2, H / 2))
+      .force("collision", d3.forceCollide().radius(d => d.r + 2))
+      .force("mustNotRepel", mustNotRepelForce(mustNotLinks, nodes, baseR));
+ 
+    function mustNotRepelForce(mnLinks, nodes, baseR) {
+      const byId = {};
+      nodes.forEach(n => byId[n.id] = n);
+      return function(alpha) {
+        mnLinks.forEach(link => {
+          const s = typeof link.source === "object" ? link.source : byId[link.source];
+          const t = typeof link.target === "object" ? link.target : byId[link.target];
+          if (!s || !t) return;
+          const dx = t.x - s.x, dy = t.y - s.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const minDist = (s.r || baseR) + (t.r || baseR) + 60;
+          if (dist < minDist) {
+            const f = ((minDist - dist) / dist) * alpha * 1.8;
+            s.vx -= dx * f; s.vy -= dy * f;
+            t.vx += dx * f; t.vy += dy * f;
+          }
+        });
+      };
+    }
+ 
+    const mustLinkSel = linkGroup.selectAll("line.must")
+      .data(mustLinks).enter().append("line").attr("class","link-must");
+ 
+    const nodeSel = nodeGroup.selectAll("g.bubble")
+      .data(nodes).enter().append("g").attr("class","bubble");
+ 
+    nodeSel.append("circle")
+      .attr("class","main-circle")
+      .attr("r", d => d.r)
+      .attr("fill",   d => d.exterior ? "#fdf6ee" : "#dde8f0")
+      .attr("stroke", d => d.exterior ? "#c17f4a" : "#7a9ab5")
+      .attr("stroke-width", 1.5);
+ 
+    nodeSel.filter(d => d.exterior)
+      .append("circle")
+      .attr("r", d => d.r + 6).attr("fill","none")
+      .attr("stroke","#c17f4a").attr("stroke-width",1).attr("stroke-dasharray","3,3")
+      .style("pointer-events","none");
+ 
+    nodeSel.append("text").attr("class","bubble-label").text(d => d.id);
+ 
+    nodeSel.append("circle")
+      .attr("class","resize-handle").attr("r",4)
+      .attr("cx", d => d.r * 0.7).attr("cy", d => -d.r * 0.7)
+      .attr("fill","var(--surface)").attr("stroke","var(--border)").attr("stroke-width",1)
+      .style("cursor","nwse-resize");
+ 
+    nodeSel.call(d3.drag()
+      .filter(event => !event.target.classList.contains("resize-handle"))
+      .on("start", (event, d) => { if (!event.active) sim.alphaTarget(0.15).restart(); d.fx = d.x; d.fy = d.y; })
+      .on("drag",  (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on("end",   (event, d) => { if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+ 
+    nodeSel.select(".resize-handle").call(d3.drag()
+      .on("start", event => event.sourceEvent.stopPropagation())
+      .on("drag", (event, d) => {
+        const dx = event.x - d.x, dy = event.y - d.y;
+        const newR = Math.max(28, Math.sqrt(dx * dx + dy * dy));
+        d.r = newR;
+        const g = d3.select(nodeSel.nodes()[nodes.indexOf(d)]);
+        g.select("circle.main-circle").attr("r", newR);
+        g.select(".resize-handle").attr("cx", newR * 0.7).attr("cy", -newR * 0.7);
+        g.select("circle:nth-child(2)").attr("r", d.exterior ? newR + 6 : newR);
+        sim.force("collision", d3.forceCollide().radius(n => n.r + 8));
+        sim.force("link").distance(l => (l.source.r||baseR) + (l.target.r||baseR) + 4);
+        sim.alpha(0.3).restart();
+      })
+    );
+ 
+    const OVERLAY_W = 280 + 16 + 8; // overlay width + right offset + gap
+ 
+    sim.on("tick", () => {
+      const overlayVisible = document.getElementById("grid-overlay").classList.contains("visible");
+      const rightBound = overlayVisible ? W - OVERLAY_W : W;
+      nodes.forEach(d => {
+        d.x = Math.max(d.r + 12, Math.min(rightBound - d.r - 12, d.x));
+        d.y = Math.max(d.r + 12, Math.min(H - d.r - 12, d.y));
+      });
+      mustLinkSel
+        .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+      nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+  }
+ 
+  // ── UTILS ────────────────────────────────────────────────────────────────────
+  function showError(msg) { const el = document.getElementById("error-msg"); el.textContent = msg; el.style.display = "block"; }
+  function clearError()   { const el = document.getElementById("error-msg"); el.style.display = "none"; el.textContent = ""; }
+</script>
+</body>
+</html>
