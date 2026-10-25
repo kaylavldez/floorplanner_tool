@@ -2,7 +2,7 @@
 
 A web tool that turns room requirements into valid floorplan layouts. You describe which rooms exist and how they relate to each other, and a constraint solver searches for a layout that satisfies every rule.
 
-[Floorplanner screenshot](preview.png)
+[Floorplanner Tool Screenshot](preview.png)
 
 ## Why I built this
 
